@@ -1,20 +1,40 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "../config.js";
-import { COLORS } from "../colors.js";
+import { COLORS, TARGET_IDS } from "../colors.js";
+import { rankTargetIds } from "../ranking.js";
 import { bracketRounds, matchesOf } from "./bracket.js";
+import { connectorPath } from "./lines.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const REAL_LABELS = {
-  rose: "Ceramic Pink/Rose Gold",
+  rose: "Ceramic Pink / Rose Gold",
   fig: "Jasper Plum",
-  cranberry: "Red Velvet/Gold",
-  petal: "Ceramic Pink/Rose Gold",
+  apricot: "Ceramic Apricot / Topaz",
+  amber: "Amber Silk",
+  cranberry: "Red Velvet / Gold",
+  petal: "Ceramic Pink / Rose Gold",
   mulberry: "Jasper Plum",
-  garnet: "Red Velvet/Gold",
+  garnet: "Red Velvet / Gold",
 };
 
-const TRACKED_IDS = new Set(Object.keys(REAL_LABELS));
+const TARGET_SWATCHES = {
+  rose: "#dab2ba",
+  fig: "#522c40",
+  apricot: "#e8c09a",
+  amber: "#c48454",
+  cranberry: "#8e2436",
+};
+
+const TRACKED_IDS = new Set([...TARGET_IDS, "petal", "mulberry", "garnet"]);
+const SUB_ROUNDS = new Set([
+  "pair",
+  "cross",
+  "sub_open",
+  "sub_drop",
+  "sub_semi",
+  "sub_final",
+]);
 
 const COLOR_NAMES = {
   mocha: "мокко",
@@ -33,6 +53,8 @@ const COLOR_NAMES = {
   rose: "роза",
   fig: "инжир",
   cranberry: "клюква",
+  apricot: "абрикос",
+  amber: "янтарь",
   petal: "роза",
   mulberry: "инжир",
   garnet: "клюква",
@@ -105,7 +127,7 @@ function slotClass(hex, won) {
 
 function trackedMatches(session) {
   const named = (session.test_choices ?? []).filter((row) =>
-    ["pair", "cross", "sub_open", "sub_drop", "sub_final"].includes(row.round_name),
+    SUB_ROUNDS.has(row.round_name),
   );
   const rows =
     named.length > 0
@@ -123,24 +145,51 @@ function canonicalId(id) {
   return id;
 }
 
-function renderTrackedRank(session) {
-  const matches = trackedMatches(session);
-  if (matches.length === 0) return "";
+function targetHex(id, rows) {
+  return (
+    rows.find((row) => canonicalId(row.left_color) === id)?.left_hex ||
+    rows.find((row) => canonicalId(row.right_color) === id)?.right_hex ||
+    COLORS.find((color) => color.id === id)?.hex ||
+    TARGET_SWATCHES[id] ||
+    "#333"
+  );
+}
 
-  const ids = COLORS.slice(-3).map((color) => color.id);
-  const wins = Object.fromEntries(ids.map((id) => [id, 0]));
-  for (const match of matches) {
-    const chosen = canonicalId(match.chosen_color);
-    if (wins[chosen] != null) wins[chosen] += 1;
-  }
+function winWord(count) {
+  const n10 = count % 10;
+  const n100 = count % 100;
+  if (n10 === 1 && n100 !== 11) return "победа";
+  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return "победы";
+  return "побед";
+}
+
+function orderWithGrandFinal(ranked, grandFinal) {
+  if (!grandFinal) return ranked;
+  const champ = canonicalId(grandFinal.chosen_color);
+  const loser = canonicalId(
+    grandFinal.left_color === grandFinal.chosen_color
+      ? grandFinal.right_color
+      : grandFinal.left_color,
+  );
+  return [
+    champ,
+    loser,
+    ...ranked.filter((id) => id !== champ && id !== loser),
+  ];
+}
+
+function renderTrackedRank(session) {
+  if ((session.test_choices ?? []).length === 0) return "";
+
+  const matches = trackedMatches(session);
+  const grandFinal = matches.find((row) => row.round_name === "sub_final");
+  const circle = matches.filter((row) => row.round_name !== "sub_final");
+  const { ranked: circleRanked, wins } = rankTargetIds(TARGET_IDS, circle, canonicalId);
+  const ranked = orderWithGrandFinal(circleRanked, grandFinal);
 
   const knockoutCollisions = (session.test_choices ?? []).filter(
     (row) =>
-      row.round_name !== "pair" &&
-      row.round_name !== "cross" &&
-      row.round_name !== "sub_open" &&
-      row.round_name !== "sub_drop" &&
-      row.round_name !== "sub_final" &&
+      !SUB_ROUNDS.has(row.round_name) &&
       TRACKED_IDS.has(row.left_color) &&
       TRACKED_IDS.has(row.right_color),
   );
@@ -148,21 +197,9 @@ function renderTrackedRank(session) {
     (a, b) => a.step_index - b.step_index,
   );
 
-  const ranked = [...ids].sort((a, b) => wins[b] - wins[a]);
-  const topWins = wins[ranked[0]];
-  let tied = ranked.filter((id) => wins[id] === topWins);
-
-  if (tied.length > 1 && knockoutCollisions.length > 0) {
-    const extra = Object.fromEntries(ids.map((id) => [id, 0]));
-    for (const match of knockoutCollisions) {
-      const chosen = canonicalId(match.chosen_color);
-      if (extra[chosen] != null) extra[chosen] += 1;
-    }
-    ranked.sort((a, b) => wins[b] - wins[a] || extra[b] - extra[a]);
-    tied = ranked.filter(
-      (id) => wins[id] === wins[ranked[0]] && extra[id] === extra[ranked[0]],
-    );
-  }
+  const leader = ranked[0];
+  const runnerUp = ranked[1];
+  const tied = !grandFinal && wins[leader] === wins[runnerUp];
 
   return `
     <section class="shade-rank">
@@ -170,15 +207,12 @@ function renderTrackedRank(session) {
       <ol>
         ${ranked
           .map((id, index) => {
-            const hex =
-              allShown.find((row) => canonicalId(row.left_color) === id)?.left_hex ||
-              allShown.find((row) => canonicalId(row.right_color) === id)?.right_hex ||
-              "#333";
+            const hex = targetHex(id, allShown);
             return `
               <li>
                 <span class="shade-swatch" style="background:${hex}"></span>
                 <strong>${index + 1}. ${realLabel(id)}</strong>
-                <span>${wins[id]} ${wins[id] === 1 ? "победа" : "победы"}</span>
+                <span>${wins[id] ?? 0} ${winWord(wins[id] ?? 0)}</span>
               </li>
             `;
           })
@@ -199,9 +233,9 @@ function renderTrackedRank(session) {
       </div>
       <p class="shade-verdict">
         ${
-          tied.length > 1
-            ? `Лидер пока не один: ${tied.map(realLabel).join(" и ")}.`
-            : `Лучше всего зашёл ${realLabel(ranked[0])}.`
+          tied
+            ? `Лидер пока не один: ${realLabel(leader)} и ${realLabel(runnerUp)}.`
+            : `Лучше всего зашёл ${realLabel(leader)}.`
         }
       </p>
     </section>
@@ -224,13 +258,30 @@ function renderMatch(match) {
   `;
 }
 
+function clusterMatches(matches) {
+  const clusters = [];
+  for (let index = 0; index < matches.length; index += 2) {
+    clusters.push(matches.slice(index, index + 2));
+  }
+  return clusters;
+}
+
 function renderRound(round) {
   return `
     <section class="round">
       <p class="round-title">${round.title}</p>
       <div class="matches">
-        ${round.matches
-          .map((match) => `<div class="match-slot">${renderMatch(match)}</div>`)
+        ${clusterMatches(round.matches)
+          .map((cluster) => {
+            const single = cluster.length === 1 ? " is-single" : "";
+            return `
+              <div class="cluster${single}">
+                ${cluster
+                  .map((match) => `<div class="match-slot">${renderMatch(match)}</div>`)
+                  .join("")}
+              </div>
+            `;
+          })
           .join("")}
       </div>
     </section>
@@ -238,24 +289,22 @@ function renderRound(round) {
 }
 
 function renderChampion(champion) {
-  if (!champion) {
-    return `
-      <section class="round champion-round">
-        <p class="round-title">Чемпион</p>
-        <div class="matches">
-          <p class="incomplete">Ещё нет победителя</p>
-        </div>
-      </section>
-    `;
-  }
-  return `
-    <section class="round champion-round">
-      <p class="round-title">Чемпион</p>
-      <div class="matches">
+  const inner = champion
+    ? `
         <div class="trophy">
           <div class="trophy-color" style="background:${champion.hex}"></div>
           <strong>${colorLabel(champion.id)}</strong>
           <span>цвет победитель</span>
+        </div>
+      `
+    : `<p class="incomplete">Ещё нет победителя</p>`;
+
+  return `
+    <section class="round champion-round">
+      <p class="round-title">Чемпион</p>
+      <div class="matches">
+        <div class="cluster is-single is-end">
+          <div class="match-slot">${inner}</div>
         </div>
       </div>
     </section>
@@ -266,9 +315,9 @@ function renderSubBracket(choices) {
   const labels = {
     sub_open: "старт",
     sub_drop: "нижняя сетка",
-    sub_final: "гранд-финал",
-    pair: "встреча",
+    pair: "круг",
     cross: "встреча",
+    sub_final: "гранд-финал",
   };
   const matches = (choices ?? [])
     .filter((row) => labels[row.round_name])
@@ -373,6 +422,53 @@ function visibleSessions() {
   return sessions.filter((session) => session.participant_name.toLowerCase().includes(query));
 }
 
+function slotAnchor(slot, side, origin) {
+  const card = slot.querySelector(".match, .trophy") || slot;
+  const box = card.getBoundingClientRect();
+  return {
+    x: (side === "right" ? box.right : box.left) - origin.x,
+    y: box.top + box.height / 2 - origin.y,
+  };
+}
+
+function drawBracketLines(bracket) {
+  bracket.querySelector(":scope > svg.bracket-lines")?.remove();
+
+  const rounds = [...bracket.querySelectorAll(":scope > .round")];
+  if (rounds.length < 2) return;
+
+  const origin = bracket.getBoundingClientRect();
+  const width = Math.max(bracket.scrollWidth, origin.width);
+  const height = Math.max(bracket.scrollHeight, origin.height);
+  const paths = [];
+
+  for (let index = 0; index < rounds.length - 1; index += 1) {
+    const from = [...rounds[index].querySelectorAll(".match-slot")].map((slot) =>
+      slotAnchor(slot, "right", origin),
+    );
+    const to = [...rounds[index + 1].querySelectorAll(".match-slot")].map((slot) =>
+      slotAnchor(slot, "left", origin),
+    );
+    const d = connectorPath(from, to);
+    if (d) paths.push(d);
+  }
+
+  if (paths.length === 0) return;
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "bracket-lines");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", paths.join(""));
+  svg.append(path);
+  bracket.prepend(svg);
+}
+
+function refreshBracketLines() {
+  document.querySelectorAll(".bracket").forEach(drawBracketLines);
+}
+
 function paint() {
   const list = visibleSessions();
   renderPeople(list);
@@ -384,6 +480,7 @@ function paint() {
       block: "start",
     });
   }
+  requestAnimationFrame(refreshBracketLines);
 }
 
 async function load() {
@@ -435,4 +532,7 @@ searchInput.addEventListener("input", () => {
 });
 
 refreshButton.addEventListener("click", load);
+window.addEventListener("resize", refreshBracketLines);
+document.fonts?.ready.then(refreshBracketLines);
+new ResizeObserver(refreshBracketLines).observe(boardsEl);
 load();

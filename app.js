@@ -1,9 +1,10 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config.js";
-import { COLORS } from "./colors.js";
+import { COLORS, TARGET_IDS } from "./colors.js";
+import { everyPair, pickSpacedSteps, rankTargetIds } from "./ranking.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const TOTAL_STEPS = 19;
+const TOTAL_STEPS = 27;
 
 const startScreen = document.querySelector("#start-screen");
 const testScreen = document.querySelector("#test-screen");
@@ -95,8 +96,8 @@ function pickContrastPartner(left, pool) {
   return options[Math.floor(Math.random() * options.length)].color;
 }
 
-const MARKED = COLORS.slice(-3);
-const MARKED_IDS = new Set(MARKED.map((color) => color.id));
+const MARKED = COLORS.filter((color) => TARGET_IDS.includes(color.id));
+const MARKED_IDS = new Set(TARGET_IDS);
 
 function roundLabel(size) {
   if (size === 16) return { name: "round_of_16" };
@@ -106,25 +107,50 @@ function roundLabel(size) {
   return { name: "decoy" };
 }
 
-function pickMidSubSteps(total, count, minGap = 4) {
-  const start = Math.max(2, Math.round(total * 0.32));
-  const end = Math.min(total - 1, Math.round(total * 0.84));
-  const inner = [];
-  for (let step = start; step <= end; step += 1) inner.push(step);
-  for (let attempt = 0; attempt < 160; attempt += 1) {
-    const picked = shuffle(inner)
-      .slice(0, count)
-      .sort((left, right) => left - right);
-    const spaced = picked.every(
-      (step, index) => index === 0 || step - picked[index - 1] >= minGap,
-    );
-    if (spaced) return picked;
+function createTournament() {
+  const grandFinalStep = TOTAL_STEPS - 2;
+  const extraQueue = shuffle(everyPair(MARKED)).map(([left, right]) => ({
+    ...flipPair(left, right),
+    kind: "pair",
+    subRound: "pair",
+  }));
+
+  return {
+    extraSteps: new Set(
+      pickSpacedSteps(shuffle, {
+        start: 3,
+        end: grandFinalStep - 2,
+        count: extraQueue.length,
+        minGap: 2,
+      }),
+    ),
+    extraQueue,
+    pairLog: [],
+    grandFinalStep,
+    pendingGf: null,
+    fillerQueue: splitMarkedOpeners(pairUp([...COLORS])),
+    fillerWinners: [],
+    fillerRoundSize: 16,
+    fillerChampion: null,
+    decoys: COLORS.filter((color) => !MARKED_IDS.has(color.id)),
+    champion: null,
+    closer: null,
+    closerDone: false,
+  };
+}
+
+function currentGrandFinal(tournament) {
+  if (!tournament.pendingGf) {
+    const { ranked } = rankTargetIds(TARGET_IDS, tournament.pairLog);
+    const left = MARKED.find((color) => color.id === ranked[0]);
+    const right = MARKED.find((color) => color.id === ranked[1]);
+    tournament.pendingGf = {
+      ...flipPair(left, right),
+      kind: "pair",
+      subRound: "sub_final",
+    };
   }
-  if (count <= 1) return [Math.round((start + end) / 2)];
-  const span = end - start;
-  return Array.from({ length: count }, (_, index) =>
-    start + Math.round((span * index) / (count - 1)),
-  );
+  return tournament.pendingGf;
 }
 
 function flipPair(left, right) {
@@ -168,51 +194,6 @@ function splitMarkedOpeners(matches) {
   return preferPlainOpener(matches);
 }
 
-function createTournament() {
-  return {
-    extraSteps: new Set(pickMidSubSteps(TOTAL_STEPS, 3, 4)),
-    sub: {
-      stage: 0,
-      bye: null,
-      openerWinner: null,
-      openerLoser: null,
-      dropWinner: null,
-      pending: null,
-    },
-    fillerQueue: splitMarkedOpeners(pairUp([...COLORS])),
-    fillerWinners: [],
-    fillerRoundSize: 16,
-    fillerChampion: null,
-    decoys: COLORS.filter((color) => !MARKED_IDS.has(color.id)),
-    champion: null,
-    closer: null,
-    closerDone: false,
-  };
-}
-
-function buildSubMatch(sub) {
-  if (sub.stage === 0) {
-    const [left, right, bye] = shuffle([...MARKED]);
-    sub.bye = bye;
-    return { ...flipPair(left, right), kind: "pair", subRound: "sub_open" };
-  }
-  if (sub.stage === 1) {
-    return { ...flipPair(sub.openerLoser, sub.bye), kind: "pair", subRound: "sub_drop" };
-  }
-  return {
-    ...flipPair(sub.openerWinner, sub.dropWinner),
-    kind: "pair",
-    subRound: "sub_final",
-  };
-}
-
-function currentSubMatch(tournament) {
-  if (!tournament.sub.pending) {
-    tournament.sub.pending = buildSubMatch(tournament.sub);
-  }
-  return tournament.sub.pending;
-}
-
 function remainingSteps() {
   return TOTAL_STEPS - state.stepIndex + 1;
 }
@@ -245,8 +226,11 @@ function currentMatch() {
     }
     return tournament.closer;
   }
-  if (tournament.extraSteps.has(state.stepIndex)) {
-    return currentSubMatch(tournament);
+  if (state.stepIndex === tournament.grandFinalStep) {
+    return currentGrandFinal(tournament);
+  }
+  if (tournament.extraSteps.has(state.stepIndex) && tournament.extraQueue.length > 0) {
+    return tournament.extraQueue[0];
   }
   return nextFillerMatch(tournament);
 }
@@ -257,16 +241,16 @@ function applyPick(choice) {
   const { tournament } = state;
 
   if (match.kind === "pair") {
-    const loser = choice === 1 ? match.right : match.left;
-    if (match.subRound === "sub_open") {
-      tournament.sub.openerWinner = winner;
-      tournament.sub.openerLoser = loser;
+    if (match.subRound === "sub_final") {
+      tournament.pendingGf = null;
+    } else {
+      tournament.pairLog.push({
+        left_color: match.left.id,
+        right_color: match.right.id,
+        chosen_color: winner.id,
+      });
+      tournament.extraQueue.shift();
     }
-    if (match.subRound === "sub_drop") {
-      tournament.sub.dropWinner = winner;
-    }
-    tournament.sub.stage += 1;
-    tournament.sub.pending = null;
     return winner;
   }
 

@@ -1,3 +1,5 @@
+export const TARGET_IDS = ["rose", "fig", "apricot", "amber", "cranberry"];
+
 export const COLORS = [
   { id: "mocha", hex: "#a47864" },
   { id: "butter", hex: "#f0d78c" },
@@ -10,9 +12,9 @@ export const COLORS = [
   { id: "blush", hex: "#e8b4b8" },
   { id: "caramel", hex: "#c68a4e" },
   { id: "dustyblue", hex: "#7a9bb5" },
-  { id: "olive", hex: "#6b7042" },
-  { id: "indigo", hex: "#3d4f7c" },
   { id: "rose", hex: "#dab2ba" },
   { id: "fig", hex: "#522c40" },
+  { id: "apricot", hex: "#e8c09a" },
+  { id: "amber", hex: "#c48454" },
   { id: "cranberry", hex: "#8e2436" },
 ];
