@@ -1,6 +1,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "../config.js";
 import { COLORS } from "../colors.js";
+import { bracketRounds, matchesOf } from "./bracket.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -36,13 +37,6 @@ const COLOR_NAMES = {
   mulberry: "инжир",
   garnet: "клюква",
 };
-
-const ROUNDS = [
-  { key: "round_of_16", title: "1/8 финала", size: 8 },
-  { key: "quarterfinal", title: "1/4 финала", size: 4 },
-  { key: "semifinal", title: "1/2 финала", size: 2 },
-  { key: "final", title: "Финал", size: 1 },
-];
 
 const peopleEl = document.querySelector("#people");
 const boardsEl = document.querySelector("#boards");
@@ -103,12 +97,6 @@ function isComplete(session) {
   );
 }
 
-function matchesOf(session, roundKey) {
-  return session.test_choices
-    .filter((row) => row.round_name === roundKey)
-    .sort((a, b) => a.step_index - b.step_index);
-}
-
 function slotClass(hex, won) {
   return ["slot", won ? "is-won" : "is-lost", luminance(hex) >= 150 ? "is-light" : ""]
     .filter(Boolean)
@@ -116,14 +104,16 @@ function slotClass(hex, won) {
 }
 
 function trackedMatches(session) {
-  return session.test_choices
-    .filter(
-      (row) =>
-        row.round_name === "pair" ||
-        row.round_name === "cross" ||
-        (TRACKED_IDS.has(row.left_color) && TRACKED_IDS.has(row.right_color)),
-    )
-    .sort((a, b) => a.step_index - b.step_index);
+  const named = (session.test_choices ?? []).filter(
+    (row) => row.round_name === "pair" || row.round_name === "cross",
+  );
+  const rows =
+    named.length > 0
+      ? named
+      : (session.test_choices ?? []).filter(
+          (row) => TRACKED_IDS.has(row.left_color) && TRACKED_IDS.has(row.right_color),
+        );
+  return rows.sort((a, b) => a.step_index - b.step_index);
 }
 
 function canonicalId(id) {
@@ -143,9 +133,33 @@ function renderTrackedRank(session) {
     const chosen = canonicalId(match.chosen_color);
     if (wins[chosen] != null) wins[chosen] += 1;
   }
+
+  const knockoutCollisions = (session.test_choices ?? []).filter(
+    (row) =>
+      row.round_name !== "pair" &&
+      row.round_name !== "cross" &&
+      TRACKED_IDS.has(row.left_color) &&
+      TRACKED_IDS.has(row.right_color),
+  );
+  const allShown = [...matches, ...knockoutCollisions].sort(
+    (a, b) => a.step_index - b.step_index,
+  );
+
   const ranked = [...ids].sort((a, b) => wins[b] - wins[a]);
   const topWins = wins[ranked[0]];
-  const tied = ranked.filter((id) => wins[id] === topWins);
+  let tied = ranked.filter((id) => wins[id] === topWins);
+
+  if (tied.length > 1 && knockoutCollisions.length > 0) {
+    const extra = Object.fromEntries(ids.map((id) => [id, 0]));
+    for (const match of knockoutCollisions) {
+      const chosen = canonicalId(match.chosen_color);
+      if (extra[chosen] != null) extra[chosen] += 1;
+    }
+    ranked.sort((a, b) => wins[b] - wins[a] || extra[b] - extra[a]);
+    tied = ranked.filter(
+      (id) => wins[id] === wins[ranked[0]] && extra[id] === extra[ranked[0]],
+    );
+  }
 
   return `
     <section class="shade-rank">
@@ -154,8 +168,8 @@ function renderTrackedRank(session) {
         ${ranked
           .map((id, index) => {
             const hex =
-              matches.find((row) => canonicalId(row.left_color) === id)?.left_hex ||
-              matches.find((row) => canonicalId(row.right_color) === id)?.right_hex ||
+              allShown.find((row) => canonicalId(row.left_color) === id)?.left_hex ||
+              allShown.find((row) => canonicalId(row.right_color) === id)?.right_hex ||
               "#333";
             return `
               <li>
@@ -168,7 +182,7 @@ function renderTrackedRank(session) {
           .join("")}
       </ol>
       <div class="shade-matches">
-        ${matches
+        ${allShown
           .map(
             (match) => `
               <p>
@@ -207,15 +221,13 @@ function renderMatch(match) {
   `;
 }
 
-function renderRound(session, round) {
-  const matches = matchesOf(session, round.key);
-  const slots = Array.from({ length: round.size }, (_, index) => matches[index] ?? null);
+function renderRound(round) {
   return `
     <section class="round">
       <p class="round-title">${round.title}</p>
       <div class="matches">
-        ${slots
-          .map((match) => `<div class="match-slot">${match ? renderMatch(match) : ""}</div>`)
+        ${round.matches
+          .map((match) => `<div class="match-slot">${renderMatch(match)}</div>`)
           .join("")}
       </div>
     </section>
@@ -247,14 +259,37 @@ function renderChampion(champion) {
   `;
 }
 
-function renderCloser(session) {
-  const closer = matchesOf(session, "closer")[0];
-  if (!closer) return "";
+function renderMatchList(choices, roundKey, label) {
+  const matches = matchesOf(choices, roundKey);
+  if (matches.length === 0) return "";
   return `
     <div class="closer">
-      <p class="closer-label">Контрольный матч</p>
-      ${renderMatch(closer)}
+      <p class="closer-label">${label}</p>
+      <div class="extra-matches">
+        ${matches.map(renderMatch).join("")}
+      </div>
     </div>
+  `;
+}
+
+function renderPlayoff(session, champion) {
+  if (session.test_choices.length === 0) {
+    return `<p class="incomplete">Ходов пока нет — сетку собрать нельзя.</p>`;
+  }
+
+  const rounds = bracketRounds(session.test_choices);
+  const rows = Math.max(rounds[0]?.matches.length ?? 2, 2);
+  return `
+    <div class="bracket-scroll">
+      <div class="bracket" style="--rows:${rows}">
+        ${rounds.map(renderRound).join("")}
+        ${renderChampion(champion)}
+      </div>
+    </div>
+    ${renderMatchList(session.test_choices, "pair", "Прямые встречи")}
+    ${renderMatchList(session.test_choices, "cross", "Прямые встречи")}
+    ${renderMatchList(session.test_choices, "decoy", "Дополнительные матчи")}
+    ${renderMatchList(session.test_choices, "closer", "Контрольный матч")}
   `;
 }
 
@@ -276,17 +311,7 @@ function renderBoard(session) {
         </div>
       </header>
       ${renderTrackedRank(session)}
-      ${
-        session.test_choices.length === 0
-          ? `<p class="incomplete">Ходов пока нет — сетку собрать нельзя.</p>`
-          : `<div class="bracket-scroll">
-              <div class="bracket">
-                ${ROUNDS.map((round) => renderRound(session, round)).join("")}
-                ${renderChampion(champion)}
-              </div>
-            </div>
-            ${renderCloser(session)}`
-      }
+      ${renderPlayoff(session, champion)}
     </article>
   `;
 }

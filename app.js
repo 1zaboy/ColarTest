@@ -3,7 +3,7 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config.js";
 import { COLORS } from "./colors.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const TOTAL_STEPS = 16;
+const TOTAL_STEPS = 19;
 
 const startScreen = document.querySelector("#start-screen");
 const testScreen = document.querySelector("#test-screen");
@@ -99,8 +99,9 @@ const MARKED = COLORS.slice(-3);
 const MARKED_IDS = new Set(MARKED.map((color) => color.id));
 
 function roundLabel(size) {
-  if (size === 8) return { name: "round_of_16" };
-  if (size === 4) return { name: "quarterfinal" };
+  if (size === 16) return { name: "round_of_16" };
+  if (size === 8) return { name: "quarterfinal" };
+  if (size === 4) return { name: "semifinal" };
   if (size === 2) return { name: "final" };
   return { name: "decoy" };
 }
@@ -117,7 +118,7 @@ function pickExtraSteps(total, count, minGap = 3) {
     );
     if (spaced) return picked;
   }
-  return [4, 9, 14].slice(0, count);
+  return [5, 11, 16].slice(0, count);
 }
 
 function flipPair(left, right) {
@@ -131,8 +132,37 @@ function makeDecoy(pool) {
   return { ...flipPair(left, right), kind: "decoy" };
 }
 
+function preferPlainOpener(matches) {
+  const plainScore = (match) =>
+    Number(!MARKED_IDS.has(match.left.id)) + Number(!MARKED_IDS.has(match.right.id));
+  for (let index = 1; index < matches.length; index += 1) {
+    if (plainScore(matches[0]) === 2) break;
+    if (plainScore(matches[index]) > plainScore(matches[0])) {
+      [matches[0], matches[index]] = [matches[index], matches[0]];
+    }
+  }
+  return matches;
+}
+
+function splitMarkedOpeners(matches) {
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    if (!MARKED_IDS.has(match.left.id) || !MARKED_IDS.has(match.right.id)) continue;
+    const donorIndex = matches.findIndex(
+      (other, otherIndex) =>
+        otherIndex !== index &&
+        !MARKED_IDS.has(other.left.id) &&
+        !MARKED_IDS.has(other.right.id),
+    );
+    if (donorIndex < 0) continue;
+    const donor = matches[donorIndex];
+    matches[index] = flipPair(match.left, donor.right);
+    matches[donorIndex] = flipPair(donor.left, match.right);
+  }
+  return preferPlainOpener(matches);
+}
+
 function createTournament() {
-  const fillers = shuffle(COLORS.filter((color) => !MARKED_IDS.has(color.id)));
   const extraSteps = new Set(pickExtraSteps(TOTAL_STEPS, 3, 3));
   const extraQueue = shuffle([
     [MARKED[0], MARKED[1]],
@@ -143,11 +173,11 @@ function createTournament() {
   return {
     extraSteps,
     extraQueue,
-    fillerQueue: pairUp(fillers.slice(0, 8)),
+    fillerQueue: splitMarkedOpeners(pairUp([...COLORS])),
     fillerWinners: [],
-    fillerRoundSize: 8,
+    fillerRoundSize: 16,
     fillerChampion: null,
-    decoys: fillers.slice(8),
+    decoys: COLORS.filter((color) => !MARKED_IDS.has(color.id)),
     champion: null,
     closer: null,
     closerDone: false,

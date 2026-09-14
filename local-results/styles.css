@@ -215,8 +215,8 @@ h1 {
 
 .bracket {
   display: flex;
-  min-width: 980px;
-  min-height: 640px;
+  min-width: 720px;
+  min-height: calc(var(--rows, 4) * 84px);
 }
 
 .round {
@@ -351,8 +351,14 @@ h1 {
   font-weight: 800;
 }
 
-.closer .match {
-  max-width: 240px;
+.extra-matches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.extra-matches .match {
+  width: 220px;
 }
 
 .incomplete {
@@ -428,6 +434,6 @@ h1 {
   }
 
   .bracket {
-    min-height: 560px;
+    min-width: 640px;
   }
 }
