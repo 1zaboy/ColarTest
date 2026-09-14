@@ -1,0 +1,6 @@
+dyson_key.txt
+__pycache__/
+.DS_Store
+generate_color_images.py
+requirements.txt
+output/
