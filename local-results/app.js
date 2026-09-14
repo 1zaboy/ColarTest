@@ -6,12 +6,12 @@ import { bracketRounds, matchesOf } from "./bracket.js";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const REAL_LABELS = {
-  rose: "Ceramic Pink / Rose Gold",
+  rose: "Ceramic Pink/Rose Gold",
   fig: "Jasper Plum",
-  cranberry: "Red Velvet / Gold",
-  petal: "Ceramic Pink / Rose Gold",
+  cranberry: "Red Velvet/Gold",
+  petal: "Ceramic Pink/Rose Gold",
   mulberry: "Jasper Plum",
-  garnet: "Red Velvet / Gold",
+  garnet: "Red Velvet/Gold",
 };
 
 const TRACKED_IDS = new Set(Object.keys(REAL_LABELS));
@@ -57,7 +57,7 @@ function luminance(hex) {
 }
 
 function colorLabel(id) {
-  return COLOR_NAMES[id] ?? id;
+  return REAL_LABELS[id] ?? COLOR_NAMES[id] ?? id;
 }
 
 function formatWhen(value) {
@@ -104,8 +104,8 @@ function slotClass(hex, won) {
 }
 
 function trackedMatches(session) {
-  const named = (session.test_choices ?? []).filter(
-    (row) => row.round_name === "pair" || row.round_name === "cross",
+  const named = (session.test_choices ?? []).filter((row) =>
+    ["pair", "cross", "sub_open", "sub_drop", "sub_final"].includes(row.round_name),
   );
   const rows =
     named.length > 0
@@ -138,6 +138,9 @@ function renderTrackedRank(session) {
     (row) =>
       row.round_name !== "pair" &&
       row.round_name !== "cross" &&
+      row.round_name !== "sub_open" &&
+      row.round_name !== "sub_drop" &&
+      row.round_name !== "sub_final" &&
       TRACKED_IDS.has(row.left_color) &&
       TRACKED_IDS.has(row.right_color),
   );
@@ -259,6 +262,37 @@ function renderChampion(champion) {
   `;
 }
 
+function renderSubBracket(choices) {
+  const labels = {
+    sub_open: "старт",
+    sub_drop: "нижняя сетка",
+    sub_final: "финал подсетки",
+    pair: "встреча",
+    cross: "встреча",
+  };
+  const matches = (choices ?? [])
+    .filter((row) => labels[row.round_name])
+    .sort((a, b) => a.step_index - b.step_index);
+  if (matches.length === 0) return "";
+  return `
+    <div class="closer">
+      <p class="closer-label">Подсетка</p>
+      <div class="extra-matches">
+        ${matches
+          .map(
+            (match) => `
+              <div>
+                <p class="closer-label">${labels[match.round_name]} · шаг ${match.step_index}</p>
+                ${renderMatch(match)}
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
 function renderMatchList(choices, roundKey, label) {
   const matches = matchesOf(choices, roundKey);
   if (matches.length === 0) return "";
@@ -286,8 +320,7 @@ function renderPlayoff(session, champion) {
         ${renderChampion(champion)}
       </div>
     </div>
-    ${renderMatchList(session.test_choices, "pair", "Прямые встречи")}
-    ${renderMatchList(session.test_choices, "cross", "Прямые встречи")}
+    ${renderSubBracket(session.test_choices)}
     ${renderMatchList(session.test_choices, "decoy", "Дополнительные матчи")}
     ${renderMatchList(session.test_choices, "closer", "Контрольный матч")}
   `;

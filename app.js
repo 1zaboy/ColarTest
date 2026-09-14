@@ -106,10 +106,12 @@ function roundLabel(size) {
   return { name: "decoy" };
 }
 
-function pickExtraSteps(total, count, minGap = 3) {
+function pickMidSubSteps(total, count, minGap = 4) {
+  const start = Math.max(2, Math.round(total * 0.32));
+  const end = Math.min(total - 1, Math.round(total * 0.84));
   const inner = [];
-  for (let step = 2; step <= total - 1; step += 1) inner.push(step);
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  for (let step = start; step <= end; step += 1) inner.push(step);
+  for (let attempt = 0; attempt < 160; attempt += 1) {
     const picked = shuffle(inner)
       .slice(0, count)
       .sort((left, right) => left - right);
@@ -118,7 +120,11 @@ function pickExtraSteps(total, count, minGap = 3) {
     );
     if (spaced) return picked;
   }
-  return [5, 11, 16].slice(0, count);
+  if (count <= 1) return [Math.round((start + end) / 2)];
+  const span = end - start;
+  return Array.from({ length: count }, (_, index) =>
+    start + Math.round((span * index) / (count - 1)),
+  );
 }
 
 function flipPair(left, right) {
@@ -163,16 +169,15 @@ function splitMarkedOpeners(matches) {
 }
 
 function createTournament() {
-  const extraSteps = new Set(pickExtraSteps(TOTAL_STEPS, 3, 3));
-  const extraQueue = shuffle([
-    [MARKED[0], MARKED[1]],
-    [MARKED[0], MARKED[2]],
-    [MARKED[1], MARKED[2]],
-  ]).map(([left, right]) => ({ ...flipPair(left, right), kind: "pair" }));
-
   return {
-    extraSteps,
-    extraQueue,
+    extraSteps: new Set(pickMidSubSteps(TOTAL_STEPS, 3, 4)),
+    sub: {
+      stage: 0,
+      bye: null,
+      openerWinner: null,
+      openerLoser: null,
+      pending: null,
+    },
     fillerQueue: splitMarkedOpeners(pairUp([...COLORS])),
     fillerWinners: [],
     fillerRoundSize: 16,
@@ -182,6 +187,25 @@ function createTournament() {
     closer: null,
     closerDone: false,
   };
+}
+
+function buildSubMatch(sub) {
+  if (sub.stage === 0) {
+    const [left, right, bye] = shuffle([...MARKED]);
+    sub.bye = bye;
+    return { ...flipPair(left, right), kind: "pair", subRound: "sub_open" };
+  }
+  if (sub.stage === 1) {
+    return { ...flipPair(sub.openerLoser, sub.bye), kind: "pair", subRound: "sub_drop" };
+  }
+  return { ...flipPair(sub.openerWinner, sub.bye), kind: "pair", subRound: "sub_final" };
+}
+
+function currentSubMatch(tournament) {
+  if (!tournament.sub.pending) {
+    tournament.sub.pending = buildSubMatch(tournament.sub);
+  }
+  return tournament.sub.pending;
 }
 
 function remainingSteps() {
@@ -217,7 +241,7 @@ function currentMatch() {
     return tournament.closer;
   }
   if (tournament.extraSteps.has(state.stepIndex)) {
-    return tournament.extraQueue[0];
+    return currentSubMatch(tournament);
   }
   return nextFillerMatch(tournament);
 }
@@ -228,7 +252,13 @@ function applyPick(choice) {
   const { tournament } = state;
 
   if (match.kind === "pair") {
-    tournament.extraQueue.shift();
+    const loser = choice === 1 ? match.right : match.left;
+    if (match.subRound === "sub_open") {
+      tournament.sub.openerWinner = winner;
+      tournament.sub.openerLoser = loser;
+    }
+    tournament.sub.stage += 1;
+    tournament.sub.pending = null;
     return winner;
   }
 
@@ -261,7 +291,7 @@ function paintMatch() {
   const match = currentMatch();
   const round =
     match.kind === "pair"
-      ? { name: "pair" }
+      ? { name: match.subRound ?? "pair" }
       : match.kind === "decoy"
         ? { name: "decoy" }
         : match.kind === "closer"
