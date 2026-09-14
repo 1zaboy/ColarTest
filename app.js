@@ -12,7 +12,6 @@ const nameInput = document.querySelector("#name-input");
 const startButton = document.querySelector("#start-button");
 const startError = document.querySelector("#start-error");
 const hudStep = document.querySelector("#hud-step");
-const hudRound = document.querySelector("#hud-round");
 const hudLeft = document.querySelector("#hud-left");
 const leftSwatch = document.querySelector("#swatch-left");
 const rightSwatch = document.querySelector("#swatch-right");
@@ -147,8 +146,7 @@ function paintMatch() {
     ? roundLabel(1)
     : roundLabel(state.tournament.roundSize);
 
-  hudStep.textContent = `№${state.stepIndex}`;
-  hudRound.textContent = round.title;
+  hudStep.textContent = `${state.stepIndex} / ${TOTAL_STEPS}`;
   hudLeft.textContent = `Осталось ${remainingSteps()}`;
 
   paintSwatch(leftSwatch, match.left);
@@ -222,20 +220,23 @@ async function saveChoice(choice, winner) {
 
 async function finishTest() {
   const champion = state.tournament.champion;
-  await supabase
+  thanksTitle.textContent = `Спасибо, ${state.name}!`;
+  thanksText.textContent = "Ты прошла весь турнир цветов. Это было ярко и очень вкусно глазами.";
+  thanksScreen.style.background = `linear-gradient(160deg, ${champion.hex}, #1b1410 70%)`;
+  showScreen(thanksScreen);
+  requestAnimationFrame(() => burstConfetti());
+
+  supabase
     .from("test_sessions")
     .update({
       finished_at: new Date().toISOString(),
       champion_color: champion.id,
       champion_hex: champion.hex,
     })
-    .eq("id", state.sessionId);
-
-  thanksTitle.textContent = `Спасибо, ${state.name}!`;
-  thanksText.textContent = "Ты прошла весь турнир цветов. Это было ярко и очень вкусно глазами.";
-  thanksScreen.style.background = `linear-gradient(160deg, ${champion.hex}, #1b1410 70%)`;
-  showScreen(thanksScreen);
-  burstConfetti();
+    .eq("id", state.sessionId)
+    .then(({ error }) => {
+      if (error) console.error(error);
+    });
 }
 
 async function choose(choice) {
@@ -250,7 +251,7 @@ async function choose(choice) {
   window.setTimeout(async () => {
     button.classList.remove("is-picked");
     if (state.stepIndex >= TOTAL_STEPS) {
-      await finishTest();
+      finishTest();
       return;
     }
     state.stepIndex += 1;
@@ -261,38 +262,66 @@ async function choose(choice) {
 
 function burstConfetti() {
   const canvas = document.querySelector("#confetti");
-  const ctx = canvas.getContext("2d");
-  const colors = ["#f0d78c", "#e8b4b8", "#7a9bb5", "#c65d3b", "#dab2ba", "#ffffff"];
-  const pieces = Array.from({ length: 140 }, () => ({
-    x: Math.random() * canvas.width,
-    y: Math.random() * -canvas.height,
-    r: 4 + Math.random() * 6,
-    s: 2 + Math.random() * 4,
-    c: colors[Math.floor(Math.random() * colors.length)],
-    a: Math.random() * Math.PI,
-  }));
+  const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true });
+  if (!ctx) return;
 
-  function resize() {
-    canvas.width = thanksScreen.clientWidth;
-    canvas.height = thanksScreen.clientHeight;
-  }
-  resize();
-  window.addEventListener("resize", resize, { once: true });
+  const width = thanksScreen.clientWidth || window.innerWidth;
+  const height = thanksScreen.clientHeight || window.innerHeight;
+  const scale = width < 700 ? 1 : Math.min(window.devicePixelRatio || 1, 1.25);
+  canvas.width = Math.floor(width * scale);
+  canvas.height = Math.floor(height * scale);
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
 
-  let frame = 0;
-  function tick() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const piece of pieces) {
-      piece.y += piece.s;
-      piece.x += Math.sin(piece.a + frame / 12);
-      if (piece.y > canvas.height) piece.y = -10;
-      ctx.fillStyle = piece.c;
-      ctx.fillRect(piece.x, piece.y, piece.r, piece.r * 0.6);
+  const palette = ["#f0d78c", "#e8b4b8", "#7a9bb5", "#c65d3b", "#dab2ba", "#ffffff"];
+  const perBurst = width < 700 ? 16 : 22;
+  const sparks = [];
+
+  function spawnBurst(originX, originY) {
+    for (let i = 0; i < perBurst; i += 1) {
+      const angle = (Math.PI * 2 * i) / perBurst + Math.random() * 0.18;
+      const speed = 2.8 + Math.random() * 3.2;
+      sparks.push({
+        x: originX,
+        y: originY,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 1.8,
+        life: 1,
+        decay: 0.02 + Math.random() * 0.01,
+        size: 2.4 + Math.random() * 2,
+        color: palette[i % palette.length],
+      });
     }
-    frame += 1;
-    if (frame < 400) requestAnimationFrame(tick);
   }
-  tick();
+
+  spawnBurst(width * 0.22, height * 0.36);
+  spawnBurst(width * 0.5, height * 0.26);
+  spawnBurst(width * 0.78, height * 0.36);
+
+  const started = performance.now();
+  function tick(now) {
+    ctx.clearRect(0, 0, width, height);
+    let alive = 0;
+    for (const spark of sparks) {
+      if (spark.life <= 0) continue;
+      alive += 1;
+      spark.vy += 0.11;
+      spark.x += spark.vx;
+      spark.y += spark.vy;
+      spark.life -= spark.decay;
+      ctx.globalAlpha = Math.max(spark.life, 0);
+      ctx.fillStyle = spark.color;
+      ctx.fillRect(spark.x, spark.y, spark.size, spark.size);
+    }
+    ctx.globalAlpha = 1;
+    if (alive > 0 && now - started < 1800) {
+      requestAnimationFrame(tick);
+    } else {
+      ctx.clearRect(0, 0, width, height);
+    }
+  }
+  requestAnimationFrame(tick);
 }
 
 startButton.addEventListener("click", startTest);

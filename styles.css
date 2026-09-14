@@ -184,7 +184,7 @@ h1 {
 
 .hud {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 1fr 1fr;
   align-items: center;
   gap: 8px;
   padding: calc(10px + var(--safe-top)) 16px 10px;
@@ -195,14 +195,7 @@ h1 {
 .hud-step {
   justify-self: start;
   font-size: 18px;
-}
-
-.hud-round {
-  justify-self: center;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
+  letter-spacing: 0.04em;
 }
 
 .hud-left {
