@@ -399,6 +399,11 @@ h1 {
   font-size: 14px;
 }
 
+.shade-rank li strong {
+  font-weight: 800;
+  line-height: 1.25;
+}
+
 .shade-swatch {
   width: 22px;
   height: 22px;
@@ -412,6 +417,7 @@ h1 {
   gap: 4px;
   color: var(--muted);
   font-size: 13px;
+  line-height: 1.4;
 }
 
 .shade-verdict {
