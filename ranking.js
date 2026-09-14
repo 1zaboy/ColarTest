@@ -85,3 +85,16 @@ export function rankTargetIds(ids, results, canonicalize = (id) => id) {
 
   return { ranked, wins };
 }
+
+export function playoffPair(ids, results, canonicalize = (id) => id) {
+  const { ranked, wins } = rankTargetIds(ids, results, canonicalize);
+  const top = ranked.slice(0, 3);
+  if (top.length < 3) return null;
+  const [first, second, third] = top;
+  if (wins[first] === wins[second] && wins[second] === wins[third]) {
+    return [first, second];
+  }
+  if (wins[first] === wins[second]) return [first, second];
+  if (wins[second] === wins[third]) return [second, third];
+  return null;
+}

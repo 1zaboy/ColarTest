@@ -1,10 +1,10 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config.js";
 import { COLORS, TARGET_IDS } from "./colors.js";
-import { everyPair, pickSpacedSteps, rankTargetIds } from "./ranking.js";
+import { everyPair, pickSpacedSteps, playoffPair } from "./ranking.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const TOTAL_STEPS = 27;
+const BASE_STEPS = 26;
 
 const startScreen = document.querySelector("#start-screen");
 const testScreen = document.querySelector("#test-screen");
@@ -108,7 +108,6 @@ function roundLabel(size) {
 }
 
 function createTournament() {
-  const grandFinalStep = TOTAL_STEPS - 2;
   const extraQueue = shuffle(everyPair(MARKED)).map(([left, right]) => ({
     ...flipPair(left, right),
     kind: "pair",
@@ -119,15 +118,15 @@ function createTournament() {
     extraSteps: new Set(
       pickSpacedSteps(shuffle, {
         start: 3,
-        end: grandFinalStep - 2,
+        end: 23,
         count: extraQueue.length,
         minGap: 2,
       }),
     ),
     extraQueue,
     pairLog: [],
-    grandFinalStep,
-    pendingGf: null,
+    pendingPlayoff: null,
+    lastKind: null,
     fillerQueue: splitMarkedOpeners(pairUp([...COLORS])),
     fillerWinners: [],
     fillerRoundSize: 16,
@@ -139,18 +138,45 @@ function createTournament() {
   };
 }
 
-function currentGrandFinal(tournament) {
-  if (!tournament.pendingGf) {
-    const { ranked } = rankTargetIds(TARGET_IDS, tournament.pairLog);
-    const left = MARKED.find((color) => color.id === ranked[0]);
-    const right = MARKED.find((color) => color.id === ranked[1]);
-    tournament.pendingGf = {
+function knockoutLeft(tournament) {
+  if (tournament.fillerChampion) return 0;
+  const stillIn = tournament.fillerQueue.length * 2 + tournament.fillerWinners.length;
+  return Math.max(0, stillIn - 1);
+}
+
+function needsPlayoff(tournament) {
+  if (tournament.extraQueue.length > 0) return false;
+  return playoffPair(TARGET_IDS, tournament.pairLog) != null;
+}
+
+function currentPlayoff(tournament) {
+  if (!tournament.pendingPlayoff) {
+    const ids = playoffPair(TARGET_IDS, tournament.pairLog);
+    if (!ids) return nextFillerMatch(tournament);
+    const left = MARKED.find((color) => color.id === ids[0]);
+    const right = MARKED.find((color) => color.id === ids[1]);
+    tournament.pendingPlayoff = {
       ...flipPair(left, right),
       kind: "pair",
-      subRound: "sub_final",
+      subRound: "playoff",
     };
   }
-  return tournament.pendingGf;
+  return tournament.pendingPlayoff;
+}
+
+function remainingSteps() {
+  const tournament = state.tournament;
+  if (!tournament) return BASE_STEPS;
+  const playoff = needsPlayoff(tournament) ? 1 : 0;
+  const justTargets =
+    tournament.lastKind === "playoff" || tournament.lastKind === "pair";
+  const spacer = playoff && justTargets ? 1 : 0;
+  const closer = tournament.closerDone ? 0 : 1;
+  return knockoutLeft(tournament) + tournament.extraQueue.length + playoff + spacer + closer;
+}
+
+function currentTotal() {
+  return state.stepIndex + remainingSteps() - 1;
 }
 
 function flipPair(left, right) {
@@ -194,10 +220,6 @@ function splitMarkedOpeners(matches) {
   return preferPlainOpener(matches);
 }
 
-function remainingSteps() {
-  return TOTAL_STEPS - state.stepIndex + 1;
-}
-
 function nextFillerMatch(tournament) {
   if (tournament.fillerQueue.length > 0) {
     return { ...tournament.fillerQueue[0], kind: "filler" };
@@ -218,19 +240,31 @@ function nextFillerMatch(tournament) {
   return makeDecoy(tournament.decoys);
 }
 
+function readyForCloser(tournament) {
+  return (
+    tournament.extraQueue.length === 0 &&
+    !needsPlayoff(tournament) &&
+    knockoutLeft(tournament) === 0
+  );
+}
+
 function currentMatch() {
   const { tournament } = state;
-  if (state.stepIndex === TOTAL_STEPS) {
+  if (readyForCloser(tournament)) {
     if (!tournament.closer) {
       tournament.closer = { ...makeDecoy(tournament.decoys), kind: "closer", closer: true };
     }
     return tournament.closer;
   }
-  if (state.stepIndex === tournament.grandFinalStep) {
-    return currentGrandFinal(tournament);
-  }
   if (tournament.extraSteps.has(state.stepIndex) && tournament.extraQueue.length > 0) {
     return tournament.extraQueue[0];
+  }
+  if (
+    needsPlayoff(tournament) &&
+    tournament.lastKind !== "playoff" &&
+    tournament.lastKind !== "pair"
+  ) {
+    return currentPlayoff(tournament);
   }
   return nextFillerMatch(tournament);
 }
@@ -241,18 +275,18 @@ function applyPick(choice) {
   const { tournament } = state;
 
   if (match.kind === "pair") {
-    if (match.subRound === "sub_final") {
-      tournament.pendingGf = null;
-    } else {
-      tournament.pairLog.push({
-        left_color: match.left.id,
-        right_color: match.right.id,
-        chosen_color: winner.id,
-      });
-      tournament.extraQueue.shift();
-    }
+    tournament.pairLog.push({
+      left_color: match.left.id,
+      right_color: match.right.id,
+      chosen_color: winner.id,
+    });
+    if (match.subRound === "pair") tournament.extraQueue.shift();
+    tournament.pendingPlayoff = null;
+    tournament.lastKind = match.subRound === "playoff" ? "playoff" : "pair";
     return winner;
   }
+
+  tournament.lastKind = match.kind;
 
   if (match.kind === "closer" || match.kind === "decoy") {
     if (match.kind === "closer") tournament.closerDone = true;
@@ -290,7 +324,7 @@ function paintMatch() {
           ? { name: "closer" }
           : roundLabel(state.tournament.fillerRoundSize);
 
-  hudStep.textContent = `${state.stepIndex} / ${TOTAL_STEPS}`;
+  hudStep.textContent = `${state.stepIndex} / ${currentTotal()}`;
   hudLeft.textContent = `Осталось ${remainingSteps()}`;
 
   paintSwatch(leftSwatch, match.left);
@@ -322,7 +356,7 @@ async function startTest() {
   const { error } = await supabase.from("test_sessions").insert({
     id: state.sessionId,
     participant_name: name,
-    total_steps: TOTAL_STEPS,
+    total_steps: BASE_STEPS,
     user_agent: navigator.userAgent,
   });
 
@@ -338,14 +372,13 @@ async function startTest() {
   paintMatch();
 }
 
-async function saveChoice(choice, winner) {
+async function saveChoice(choice, winner, isLast) {
   const { match, round } = state.current;
-  const isLast = state.stepIndex === TOTAL_STEPS;
   const { error } = await supabase.from("test_choices").insert({
     session_id: state.sessionId,
     participant_name: state.name,
     step_index: state.stepIndex,
-    total_steps: TOTAL_STEPS,
+    total_steps: currentTotal(),
     round_name: round.name,
     left_color: match.left.id,
     right_color: match.right.id,
@@ -353,7 +386,7 @@ async function saveChoice(choice, winner) {
     right_hex: match.right.hex,
     choice,
     chosen_color: winner.id,
-    remaining_steps: remainingSteps() - 1,
+    remaining_steps: remainingSteps(),
     is_final: isLast,
   });
   if (error) {
@@ -376,6 +409,7 @@ async function finishTest() {
       finished_at: new Date().toISOString(),
       champion_color: champion?.id ?? null,
       champion_hex: champion?.hex ?? null,
+      total_steps: state.stepIndex,
     })
     .eq("id", state.sessionId)
     .then(({ error }) => {
@@ -389,12 +423,14 @@ async function choose(choice) {
   const button = choice === 1 ? leftSwatch : rightSwatch;
   button.classList.add("is-picked");
 
+  const match = state.current.match;
   const winner = applyPick(choice);
-  await saveChoice(choice, winner);
+  const isLast = match.kind === "closer";
+  await saveChoice(choice, winner, isLast);
 
   window.setTimeout(async () => {
     button.classList.remove("is-picked");
-    if (state.stepIndex >= TOTAL_STEPS) {
+    if (isLast) {
       finishTest();
       return;
     }

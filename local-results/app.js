@@ -34,6 +34,7 @@ const SUB_ROUNDS = new Set([
   "sub_drop",
   "sub_semi",
   "sub_final",
+  "playoff",
 ]);
 
 const COLOR_NAMES = {
@@ -163,29 +164,11 @@ function winWord(count) {
   return "побед";
 }
 
-function orderWithGrandFinal(ranked, grandFinal) {
-  if (!grandFinal) return ranked;
-  const champ = canonicalId(grandFinal.chosen_color);
-  const loser = canonicalId(
-    grandFinal.left_color === grandFinal.chosen_color
-      ? grandFinal.right_color
-      : grandFinal.left_color,
-  );
-  return [
-    champ,
-    loser,
-    ...ranked.filter((id) => id !== champ && id !== loser),
-  ];
-}
-
 function renderTrackedRank(session) {
   if ((session.test_choices ?? []).length === 0) return "";
 
   const matches = trackedMatches(session);
-  const grandFinal = matches.find((row) => row.round_name === "sub_final");
-  const circle = matches.filter((row) => row.round_name !== "sub_final");
-  const { ranked: circleRanked, wins } = rankTargetIds(TARGET_IDS, circle, canonicalId);
-  const ranked = orderWithGrandFinal(circleRanked, grandFinal);
+  const { ranked, wins } = rankTargetIds(TARGET_IDS, matches, canonicalId);
 
   const knockoutCollisions = (session.test_choices ?? []).filter(
     (row) =>
@@ -197,9 +180,9 @@ function renderTrackedRank(session) {
     (a, b) => a.step_index - b.step_index,
   );
 
-  const leader = ranked[0];
-  const runnerUp = ranked[1];
-  const tied = !grandFinal && wins[leader] === wins[runnerUp];
+  const top3 = ranked.slice(0, 3);
+  const tied =
+    top3.length >= 2 && new Set(top3.map((id) => wins[id])).size < Math.min(3, top3.length);
 
   return `
     <section class="shade-rank">
@@ -234,8 +217,8 @@ function renderTrackedRank(session) {
       <p class="shade-verdict">
         ${
           tied
-            ? `Лидер пока не один: ${realLabel(leader)} и ${realLabel(runnerUp)}.`
-            : `Лучше всего зашёл ${realLabel(leader)}.`
+            ? `В топ-3 ещё ничья: ${top3.map(realLabel).join(", ")}.`
+            : `Лучше всего зашёл ${realLabel(ranked[0])}.`
         }
       </p>
     </section>
@@ -318,6 +301,7 @@ function renderSubBracket(choices) {
     pair: "круг",
     cross: "встреча",
     sub_final: "гранд-финал",
+    playoff: "стык",
   };
   const matches = (choices ?? [])
     .filter((row) => labels[row.round_name])
@@ -423,11 +407,14 @@ function visibleSessions() {
 }
 
 function slotAnchor(slot, side, origin) {
-  const card = slot.querySelector(".match, .trophy") || slot;
+  const card =
+    slot.querySelector(".trophy-color") ||
+    slot.querySelector(".match, .incomplete") ||
+    slot;
   const box = card.getBoundingClientRect();
   return {
-    x: (side === "right" ? box.right : box.left) - origin.x,
-    y: box.top + box.height / 2 - origin.y,
+    x: Math.round((side === "right" ? box.right : box.left) - origin.x),
+    y: Math.round(box.top + box.height / 2 - origin.y),
   };
 }
 
@@ -459,14 +446,24 @@ function drawBracketLines(bracket) {
   svg.setAttribute("class", "bracket-lines");
   svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
   path.setAttribute("d", paths.join(""));
   svg.append(path);
   bracket.prepend(svg);
 }
 
+let drawingLines = false;
+
 function refreshBracketLines() {
-  document.querySelectorAll(".bracket").forEach(drawBracketLines);
+  if (drawingLines) return;
+  drawingLines = true;
+  try {
+    document.querySelectorAll(".bracket").forEach(drawBracketLines);
+  } finally {
+    drawingLines = false;
+  }
 }
 
 function paint() {
@@ -480,7 +477,9 @@ function paint() {
       block: "start",
     });
   }
-  requestAnimationFrame(refreshBracketLines);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(refreshBracketLines);
+  });
 }
 
 async function load() {
