@@ -1,6 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config.js";
-import { COLORS, HIDDEN_IDS } from "./colors.js";
+import { COLORS } from "./colors.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const TOTAL_STEPS = 16;
@@ -52,6 +52,9 @@ function pairUp(colors) {
   return matches;
 }
 
+const MARKED = COLORS.slice(-3);
+const MARKED_IDS = new Set(MARKED.map((color) => color.id));
+
 function roundLabel(size) {
   if (size === 8) return { name: "round_of_16" };
   if (size === 4) return { name: "quarterfinal" };
@@ -59,7 +62,7 @@ function roundLabel(size) {
   return { name: "decoy" };
 }
 
-function pickHiddenSteps(total, count, minGap = 3) {
+function pickExtraSteps(total, count, minGap = 3) {
   const inner = [];
   for (let step = 2; step <= total - 1; step += 1) inner.push(step);
   for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -79,23 +82,22 @@ function flipPair(left, right) {
 }
 
 function makeDecoy(pool) {
-  const colors = shuffle(pool.filter((color) => !HIDDEN_IDS.has(color.id)));
+  const colors = shuffle(pool.filter((color) => !MARKED_IDS.has(color.id)));
   return { ...flipPair(colors[0], colors[1]), kind: "decoy" };
 }
 
 function createTournament() {
-  const fillers = shuffle(COLORS.filter((color) => !HIDDEN_IDS.has(color.id)));
-  const byId = Object.fromEntries(COLORS.map((color) => [color.id, color]));
-  const hiddenSteps = new Set(pickHiddenSteps(TOTAL_STEPS, 3, 3));
-  const dysonQueue = shuffle([
-    [byId.petal, byId.mulberry],
-    [byId.petal, byId.garnet],
-    [byId.mulberry, byId.garnet],
-  ]).map(([left, right]) => ({ ...flipPair(left, right), kind: "cross" }));
+  const fillers = shuffle(COLORS.filter((color) => !MARKED_IDS.has(color.id)));
+  const extraSteps = new Set(pickExtraSteps(TOTAL_STEPS, 3, 3));
+  const extraQueue = shuffle([
+    [MARKED[0], MARKED[1]],
+    [MARKED[0], MARKED[2]],
+    [MARKED[1], MARKED[2]],
+  ]).map(([left, right]) => ({ ...flipPair(left, right), kind: "pair" }));
 
   return {
-    hiddenSteps,
-    dysonQueue,
+    extraSteps,
+    extraQueue,
     fillerQueue: pairUp(fillers.slice(0, 8)),
     fillerWinners: [],
     fillerRoundSize: 8,
@@ -139,8 +141,8 @@ function currentMatch() {
     }
     return tournament.closer;
   }
-  if (tournament.hiddenSteps.has(state.stepIndex)) {
-    return tournament.dysonQueue[0];
+  if (tournament.extraSteps.has(state.stepIndex)) {
+    return tournament.extraQueue[0];
   }
   return nextFillerMatch(tournament);
 }
@@ -150,8 +152,8 @@ function applyPick(choice) {
   const winner = choice === 1 ? match.left : match.right;
   const { tournament } = state;
 
-  if (match.kind === "cross") {
-    tournament.dysonQueue.shift();
+  if (match.kind === "pair") {
+    tournament.extraQueue.shift();
     return winner;
   }
 
@@ -183,8 +185,8 @@ function showScreen(screen) {
 function paintMatch() {
   const match = currentMatch();
   const round =
-    match.kind === "cross"
-      ? { name: "cross" }
+    match.kind === "pair"
+      ? { name: "pair" }
       : match.kind === "decoy"
         ? { name: "decoy" }
         : match.kind === "closer"

@@ -1,14 +1,19 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "../config.js";
-import { HIDDEN_IDS } from "../colors.js";
+import { COLORS } from "../colors.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const SECRET_LABELS = {
-  petal: "Ceramic Pink",
+const REAL_LABELS = {
+  rose: "Ceramic Pink / Rose Gold",
+  fig: "Jasper Plum",
+  cranberry: "Red Velvet / Gold",
+  petal: "Ceramic Pink / Rose Gold",
   mulberry: "Jasper Plum",
-  garnet: "Red Velvet",
+  garnet: "Red Velvet / Gold",
 };
+
+const TRACKED_IDS = new Set(Object.keys(REAL_LABELS));
 
 const COLOR_NAMES = {
   mocha: "мокко",
@@ -24,9 +29,12 @@ const COLOR_NAMES = {
   dustyblue: "пыльный синий",
   olive: "олива",
   indigo: "индиго",
-  petal: "лепесток",
-  mulberry: "шелковица",
-  garnet: "гранат",
+  rose: "роза",
+  fig: "инжир",
+  cranberry: "клюква",
+  petal: "роза",
+  mulberry: "инжир",
+  garnet: "клюква",
 };
 
 const ROUNDS = [
@@ -68,8 +76,8 @@ function formatWhen(value) {
   }).format(new Date(value));
 }
 
-function secretLabel(id) {
-  return SECRET_LABELS[id] ?? colorLabel(id);
+function realLabel(id) {
+  return REAL_LABELS[id] ?? colorLabel(id);
 }
 
 function hexForChoice(match, colorId) {
@@ -107,67 +115,76 @@ function slotClass(hex, won) {
     .join(" ");
 }
 
-function crossMatches(session) {
+function trackedMatches(session) {
   return session.test_choices
     .filter(
       (row) =>
+        row.round_name === "pair" ||
         row.round_name === "cross" ||
-        (HIDDEN_IDS.has(row.left_color) && HIDDEN_IDS.has(row.right_color)),
+        (TRACKED_IDS.has(row.left_color) && TRACKED_IDS.has(row.right_color)),
     )
     .sort((a, b) => a.step_index - b.step_index);
 }
 
-function renderSecretRank(session) {
-  const matches = crossMatches(session);
+function canonicalId(id) {
+  if (id === "petal") return "rose";
+  if (id === "mulberry") return "fig";
+  if (id === "garnet") return "cranberry";
+  return id;
+}
+
+function renderTrackedRank(session) {
+  const matches = trackedMatches(session);
   if (matches.length === 0) return "";
 
-  const ids = ["petal", "mulberry", "garnet"];
+  const ids = COLORS.slice(-3).map((color) => color.id);
   const wins = Object.fromEntries(ids.map((id) => [id, 0]));
   for (const match of matches) {
-    if (wins[match.chosen_color] != null) wins[match.chosen_color] += 1;
+    const chosen = canonicalId(match.chosen_color);
+    if (wins[chosen] != null) wins[chosen] += 1;
   }
   const ranked = [...ids].sort((a, b) => wins[b] - wins[a]);
   const topWins = wins[ranked[0]];
   const tied = ranked.filter((id) => wins[id] === topWins);
 
   return `
-    <section class="secret-rank">
-      <p class="secret-title">Скрытый рейтинг</p>
+    <section class="shade-rank">
+      <p class="shade-title">Рейтинг оттенков</p>
       <ol>
         ${ranked
           .map((id, index) => {
             const hex =
-              matches.find((row) => row.left_color === id)?.left_hex ||
-              matches.find((row) => row.right_color === id)?.right_hex ||
+              matches.find((row) => canonicalId(row.left_color) === id)?.left_hex ||
+              matches.find((row) => canonicalId(row.right_color) === id)?.right_hex ||
               "#333";
             return `
               <li>
-                <span class="secret-swatch" style="background:${hex}"></span>
-                <strong>${index + 1}. ${secretLabel(id)}</strong>
+                <span class="shade-swatch" style="background:${hex}"></span>
+                <strong>${index + 1}. ${realLabel(id)}</strong>
                 <span>${wins[id]} ${wins[id] === 1 ? "победа" : "победы"}</span>
               </li>
             `;
           })
           .join("")}
       </ol>
-      <div class="secret-matches">
+      <div class="shade-matches">
         ${matches
           .map(
             (match) => `
               <p>
-                шаг ${match.step_index}: ${secretLabel(match.left_color)} vs
-                ${secretLabel(match.right_color)} →
-                <b>${secretLabel(match.chosen_color)}</b>
+                шаг ${match.step_index}: ${realLabel(match.left_color)} vs
+                ${realLabel(match.right_color)} →
+                <b>${realLabel(match.chosen_color)}</b>
               </p>
             `,
           )
           .join("")}
       </div>
-      <p class="secret-verdict">
+      <p class="shade-verdict">
         ${
           tied.length > 1
-            ? `Лидер пока не один: ${tied.map(secretLabel).join(" и ")}.`
-            : `Лучше всего зашёл ${secretLabel(ranked[0])}.`
+            ? `Лидер пока не один: ${tied.map(realLabel).join(" и ")}.`
+            : `Лучше всего зашёл ${realLabel(ranked[0])}.`
         }
       </p>
     </section>
@@ -258,7 +275,7 @@ function renderBoard(session) {
           <p>${subtitle}</p>
         </div>
       </header>
-      ${renderSecretRank(session)}
+      ${renderTrackedRank(session)}
       ${
         session.test_choices.length === 0
           ? `<p class="incomplete">Ходов пока нет — сетку собрать нельзя.</p>`

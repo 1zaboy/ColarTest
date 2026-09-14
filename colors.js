@@ -12,9 +12,7 @@ export const COLORS = [
   { id: "dustyblue", hex: "#7a9bb5" },
   { id: "olive", hex: "#6b7042" },
   { id: "indigo", hex: "#3d4f7c" },
-  { id: "petal", hex: "#dab2ba" },
-  { id: "mulberry", hex: "#522c40" },
-  { id: "garnet", hex: "#8e2436" },
+  { id: "rose", hex: "#dab2ba" },
+  { id: "fig", hex: "#522c40" },
+  { id: "cranberry", hex: "#8e2436" },
 ];
-
-export const HIDDEN_IDS = new Set(["petal", "mulberry", "garnet"]);
