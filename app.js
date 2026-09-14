@@ -45,11 +45,54 @@ function luminance(hex) {
 }
 
 function pairUp(colors) {
+  const remaining = shuffle(colors);
   const matches = [];
-  for (let i = 0; i < colors.length; i += 2) {
-    matches.push({ left: colors[i], right: colors[i + 1] });
+  while (remaining.length >= 2) {
+    const left = remaining.shift();
+    const right = pickContrastPartner(left, remaining);
+    remaining.splice(
+      remaining.findIndex((color) => color.id === right.id),
+      1,
+    );
+    matches.push({ ...flipPair(left, right) });
   }
   return matches;
+}
+
+const MIN_DELTA_E = 32;
+
+function srgbToLinear(channel) {
+  const value = channel / 255;
+  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+}
+
+function hexToLab(hex) {
+  const r = srgbToLinear(parseInt(hex.slice(1, 3), 16));
+  const g = srgbToLinear(parseInt(hex.slice(3, 5), 16));
+  const b = srgbToLinear(parseInt(hex.slice(5, 7), 16));
+  const x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047;
+  const y = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 1;
+  const z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
+  const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  const fx = f(x);
+  const fy = f(y);
+  const fz = f(z);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
+function deltaE(leftHex, rightHex) {
+  const left = hexToLab(leftHex);
+  const right = hexToLab(rightHex);
+  return Math.hypot(left[0] - right[0], left[1] - right[1], left[2] - right[2]);
+}
+
+function pickContrastPartner(left, pool) {
+  const scored = pool
+    .map((color) => ({ color, dist: deltaE(left.hex, color.hex) }))
+    .sort((a, b) => b.dist - a.dist);
+  const farEnough = scored.filter((item) => item.dist >= MIN_DELTA_E);
+  const options = farEnough.length > 0 ? farEnough : scored.slice(0, 1);
+  return options[Math.floor(Math.random() * options.length)].color;
 }
 
 const MARKED = COLORS.slice(-3);
@@ -83,7 +126,9 @@ function flipPair(left, right) {
 
 function makeDecoy(pool) {
   const colors = shuffle(pool.filter((color) => !MARKED_IDS.has(color.id)));
-  return { ...flipPair(colors[0], colors[1]), kind: "decoy" };
+  const left = colors[0];
+  const right = pickContrastPartner(left, colors.slice(1));
+  return { ...flipPair(left, right), kind: "decoy" };
 }
 
 function createTournament() {
