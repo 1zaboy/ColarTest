@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Сетки цветов</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Unbounded:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <p class="eyebrow">локальная сетка</p>
+        <h1>Кто прошёл турнир</h1>
+        <p class="lede">
+          Все участники и их чемпионские сетки цветов — как на плей-офф.
+        </p>
+        <div class="toolbar">
+          <label class="search">
+            <span class="sr-only">Поиск по имени</span>
+            <input
+              id="search-input"
+              type="search"
+              placeholder="Найти по имени"
+              autocomplete="off"
+            />
+          </label>
+          <button class="ghost" id="refresh-button" type="button">Обновить</button>
+          <p class="meta" id="status">Загружаю…</p>
+        </div>
+      </header>
+
+      <nav class="people" id="people" aria-label="Участники"></nav>
+      <main id="boards"></main>
+      <p class="empty" id="empty" hidden>Никого не нашлось.</p>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -52,46 +52,58 @@ function pairUp(colors) {
   return matches;
 }
 
-function seedBracket(colors) {
-  const hidden = shuffle(colors.filter((color) => HIDDEN_IDS.has(color.id)));
-  const fillers = shuffle(colors.filter((color) => !HIDDEN_IDS.has(color.id)));
-  const slots = Array(16).fill(null);
-  [3, 8, 12].forEach((position, index) => {
-    slots[position] = hidden[index];
-  });
-  let fillerIndex = 0;
-  return slots.map((slot) => slot ?? fillers[fillerIndex++]);
-}
-
 function roundLabel(size) {
-  if (size === 16) return { name: "round_of_16", title: "сетка 16" };
-  if (size === 8) return { name: "quarterfinal", title: "сетка 8" };
-  if (size === 4) return { name: "semifinal", title: "сетка 4" };
-  if (size === 2) return { name: "final", title: "сетка 2" };
-  return { name: "extra", title: "сетка 2" };
+  if (size === 8) return { name: "round_of_16" };
+  if (size === 4) return { name: "quarterfinal" };
+  if (size === 2) return { name: "final" };
+  return { name: "decoy" };
 }
 
-function makeCloser(champion, pool) {
-  const decoys = shuffle(
-    pool.filter((color) => color.id !== champion.id && !HIDDEN_IDS.has(color.id)),
-  );
-  return {
-    left: decoys[0],
-    right: decoys[1],
-    closer: true,
-  };
+function pickHiddenSteps(total, count, minGap = 3) {
+  const inner = [];
+  for (let step = 2; step <= total - 1; step += 1) inner.push(step);
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const picked = shuffle(inner)
+      .slice(0, count)
+      .sort((left, right) => left - right);
+    const spaced = picked.every(
+      (step, index) => index === 0 || step - picked[index - 1] >= minGap,
+    );
+    if (spaced) return picked;
+  }
+  return [4, 9, 14].slice(0, count);
+}
+
+function flipPair(left, right) {
+  return Math.random() < 0.5 ? { left, right } : { left: right, right: left };
+}
+
+function makeDecoy(pool) {
+  const colors = shuffle(pool.filter((color) => !HIDDEN_IDS.has(color.id)));
+  return { ...flipPair(colors[0], colors[1]), kind: "decoy" };
 }
 
 function createTournament() {
-  const seeded = seedBracket(COLORS);
+  const fillers = shuffle(COLORS.filter((color) => !HIDDEN_IDS.has(color.id)));
+  const byId = Object.fromEntries(COLORS.map((color) => [color.id, color]));
+  const hiddenSteps = new Set(pickHiddenSteps(TOTAL_STEPS, 3, 3));
+  const dysonQueue = shuffle([
+    [byId.petal, byId.mulberry],
+    [byId.petal, byId.garnet],
+    [byId.mulberry, byId.garnet],
+  ]).map(([left, right]) => ({ ...flipPair(left, right), kind: "cross" }));
+
   return {
-    queue: pairUp(seeded),
-    winners: [],
-    roundSize: seeded.length,
+    hiddenSteps,
+    dysonQueue,
+    fillerQueue: pairUp(fillers.slice(0, 8)),
+    fillerWinners: [],
+    fillerRoundSize: 8,
+    fillerChampion: null,
+    decoys: fillers.slice(8),
     champion: null,
     closer: null,
     closerDone: false,
-    pool: seeded,
   };
 }
 
@@ -99,36 +111,64 @@ function remainingSteps() {
   return TOTAL_STEPS - state.stepIndex + 1;
 }
 
+function nextFillerMatch(tournament) {
+  if (tournament.fillerQueue.length > 0) {
+    return { ...tournament.fillerQueue[0], kind: "filler" };
+  }
+
+  if (tournament.fillerWinners.length >= 2) {
+    tournament.fillerRoundSize = tournament.fillerWinners.length;
+    tournament.fillerQueue = pairUp(tournament.fillerWinners);
+    tournament.fillerWinners = [];
+    return { ...tournament.fillerQueue[0], kind: "filler" };
+  }
+
+  if (tournament.fillerWinners.length === 1 && !tournament.fillerChampion) {
+    tournament.fillerChampion = tournament.fillerWinners[0];
+    tournament.champion = tournament.fillerChampion;
+  }
+
+  return makeDecoy(tournament.decoys);
+}
+
 function currentMatch() {
   const { tournament } = state;
-  if (tournament.champion && tournament.closer && !tournament.closerDone) {
+  if (state.stepIndex === TOTAL_STEPS) {
+    if (!tournament.closer) {
+      tournament.closer = { ...makeDecoy(tournament.decoys), kind: "closer", closer: true };
+    }
     return tournament.closer;
   }
-  return tournament.queue[0];
+  if (tournament.hiddenSteps.has(state.stepIndex)) {
+    return tournament.dysonQueue[0];
+  }
+  return nextFillerMatch(tournament);
 }
 
 function applyPick(choice) {
-  const match = currentMatch();
+  const match = state.current?.match ?? currentMatch();
   const winner = choice === 1 ? match.left : match.right;
   const { tournament } = state;
 
-  if (match.closer) {
-    tournament.closerDone = true;
+  if (match.kind === "cross") {
+    tournament.dysonQueue.shift();
     return winner;
   }
 
-  tournament.winners.push(winner);
-  tournament.queue.shift();
-
-  if (tournament.queue.length === 0) {
-    if (tournament.winners.length === 1) {
-      tournament.champion = tournament.winners[0];
-      tournament.closer = makeCloser(tournament.champion, tournament.pool);
-    } else {
-      tournament.roundSize = tournament.winners.length;
-      tournament.queue = pairUp(tournament.winners);
-      tournament.winners = [];
+  if (match.kind === "closer" || match.kind === "decoy") {
+    if (match.kind === "closer") tournament.closerDone = true;
+    if (!tournament.champion && tournament.fillerChampion) {
+      tournament.champion = tournament.fillerChampion;
     }
+    return winner;
+  }
+
+  tournament.fillerWinners.push(winner);
+  tournament.fillerQueue.shift();
+
+  if (tournament.fillerQueue.length === 0 && tournament.fillerWinners.length === 1) {
+    tournament.fillerChampion = tournament.fillerWinners[0];
+    tournament.champion = tournament.fillerChampion;
   }
   return winner;
 }
@@ -142,9 +182,14 @@ function showScreen(screen) {
 
 function paintMatch() {
   const match = currentMatch();
-  const round = match.closer
-    ? roundLabel(1)
-    : roundLabel(state.tournament.roundSize);
+  const round =
+    match.kind === "cross"
+      ? { name: "cross" }
+      : match.kind === "decoy"
+        ? { name: "decoy" }
+        : match.kind === "closer"
+          ? { name: "closer" }
+          : roundLabel(state.tournament.fillerRoundSize);
 
   hudStep.textContent = `${state.stepIndex} / ${TOTAL_STEPS}`;
   hudLeft.textContent = `Осталось ${remainingSteps()}`;
@@ -202,7 +247,7 @@ async function saveChoice(choice, winner) {
     participant_name: state.name,
     step_index: state.stepIndex,
     total_steps: TOTAL_STEPS,
-    round_name: match.closer ? "closer" : round.name,
+    round_name: round.name,
     left_color: match.left.id,
     right_color: match.right.id,
     left_hex: match.left.hex,
@@ -222,7 +267,7 @@ async function finishTest() {
   const champion = state.tournament.champion;
   thanksTitle.textContent = `Спасибо, ${state.name}!`;
   thanksText.textContent = "Ты прошла весь турнир цветов. Это было ярко и очень вкусно глазами.";
-  thanksScreen.style.background = `linear-gradient(160deg, ${champion.hex}, #1b1410 70%)`;
+  thanksScreen.style.background = `linear-gradient(160deg, ${champion?.hex ?? "#c65d3b"}, #1b1410 70%)`;
   showScreen(thanksScreen);
   requestAnimationFrame(() => burstConfetti());
 
@@ -230,8 +275,8 @@ async function finishTest() {
     .from("test_sessions")
     .update({
       finished_at: new Date().toISOString(),
-      champion_color: champion.id,
-      champion_hex: champion.hex,
+      champion_color: champion?.id ?? null,
+      champion_hex: champion?.hex ?? null,
     })
     .eq("id", state.sessionId)
     .then(({ error }) => {
