@@ -266,7 +266,7 @@ function renderSubBracket(choices) {
   const labels = {
     sub_open: "старт",
     sub_drop: "нижняя сетка",
-    sub_final: "финал подсетки",
+    sub_final: "гранд-финал",
     pair: "встреча",
     cross: "встреча",
   };

@@ -176,6 +176,7 @@ function createTournament() {
       bye: null,
       openerWinner: null,
       openerLoser: null,
+      dropWinner: null,
       pending: null,
     },
     fillerQueue: splitMarkedOpeners(pairUp([...COLORS])),
@@ -198,7 +199,11 @@ function buildSubMatch(sub) {
   if (sub.stage === 1) {
     return { ...flipPair(sub.openerLoser, sub.bye), kind: "pair", subRound: "sub_drop" };
   }
-  return { ...flipPair(sub.openerWinner, sub.bye), kind: "pair", subRound: "sub_final" };
+  return {
+    ...flipPair(sub.openerWinner, sub.dropWinner),
+    kind: "pair",
+    subRound: "sub_final",
+  };
 }
 
 function currentSubMatch(tournament) {
@@ -256,6 +261,9 @@ function applyPick(choice) {
     if (match.subRound === "sub_open") {
       tournament.sub.openerWinner = winner;
       tournament.sub.openerLoser = loser;
+    }
+    if (match.subRound === "sub_drop") {
+      tournament.sub.dropWinner = winner;
     }
     tournament.sub.stage += 1;
     tournament.sub.pending = null;
